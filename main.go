@@ -13,6 +13,9 @@ import (
 	"sync"
 )
 
+var apiKey string
+var directory string
+
 type EmojiResponse struct {
 	OK           bool              `json:"ok"`
 	Emoji        map[string]string `json:"emoji"`
@@ -32,7 +35,7 @@ func Filename(k, url string) string {
 	if ext == "" {
 		ext = ".png"
 	}
-	return filepath.Join("emoji", k+ext)
+	return filepath.Join(directory, k+ext)
 }
 
 func cp(dst, src string) error {
@@ -77,14 +80,14 @@ func SaveEmoji(name, url string) error {
 	return ioutil.WriteFile(filename, blob, 0644)
 }
 
-func BackupEmoji(key string) error {
-	if _, err := os.Stat("emoji"); os.IsNotExist(err) {
-		if err = os.Mkdir("emoji", 0755); err != nil {
+func BackupEmoji() error {
+	if _, err := os.Stat(directory); os.IsNotExist(err) {
+		if err = os.MkdirAll(directory, 0755); err != nil {
 			return err
 		}
 	}
 
-	resp, err := http.Get("https://slack.com/api/emoji.list?token=" + key)
+	resp, err := http.Get("https://slack.com/api/emoji.list?token=" + apiKey)
 	if err != nil {
 		return err
 	}
@@ -149,7 +152,7 @@ func BackupEmoji(key string) error {
 
 		alias := strings.Replace(v, "alias:", "", -1)
 		image := Filename(alias, er.Emoji[alias])
-		link := filepath.Join("emoji", k)
+		link := filepath.Join(directory, k)
 
 		if _, err := os.Stat(link); err == nil {
 			log.Println("exists", link)
@@ -164,9 +167,19 @@ func BackupEmoji(key string) error {
 }
 
 func main() {
+	flag.StringVar(&apiKey, "key", "", "Slack API key (see https://api.slack.com/web)")
 	flag.Parse()
 
-	err := BackupEmoji(flag.Arg(0))
+	if apiKey == "" {
+		log.Fatal("API key is required")
+	}
+
+	directory = flag.Arg(0)
+	if directory == "" {
+		directory = "emoji"
+	}
+
+	err := BackupEmoji()
 
 	if err != nil {
 		log.Fatal(err)
