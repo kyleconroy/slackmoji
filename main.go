@@ -152,7 +152,11 @@ func BackupEmoji() error {
 
 		alias := strings.Replace(v, "alias:", "", -1)
 		image := Filename(alias, er.Emoji[alias])
-		link := filepath.Join(directory, k)
+		ext := filepath.Ext(image)
+		if ext == "" {
+			ext = ".png"
+		}
+		link := filepath.Join(directory, k+ext)
 
 		if _, err := os.Stat(link); err == nil {
 			log.Println("exists", link)
