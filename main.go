@@ -3,13 +3,14 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"github.com/facebookgo/errgroup"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type EmojiResponse struct {
@@ -32,6 +33,25 @@ func Filename(k, url string) string {
 		ext = ".png"
 	}
 	return filepath.Join("emoji", k+ext)
+}
+
+func cp(dst, src string) error {
+	s, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	// no need to check errors on read only file, we already got everything
+	// we need from the filesystem, so nothing can go wrong now.
+	defer s.Close()
+	d, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(d, s); err != nil {
+		d.Close()
+		return err
+	}
+	return d.Close()
 }
 
 func SaveEmoji(name, url string) error {
@@ -59,13 +79,7 @@ func SaveEmoji(name, url string) error {
 
 func BackupEmoji(key string) error {
 	if _, err := os.Stat("emoji"); os.IsNotExist(err) {
-		if err = os.Mkdir("emoji", 755); err != nil {
-			return err
-		}
-	}
-
-	if _, err := os.Stat("aliases"); os.IsNotExist(err) {
-		if err = os.Mkdir("aliases", 755); err != nil {
+		if err = os.Mkdir("emoji", 0755); err != nil {
 			return err
 		}
 	}
@@ -92,28 +106,41 @@ func BackupEmoji(key string) error {
 		return er
 	}
 
-	wg := errgroup.Group{}
+	type emoPair struct {
+		name string
+		url  string
+	}
+
+	var wg sync.WaitGroup
+
+	emoChan := make(chan emoPair)
+
+	for i := 1; i <= 15; i++ {
+		wg.Add(1)
+		go func() {
+			for {
+				ep, ok := <-emoChan
+				if !ok {
+					wg.Done()
+					return
+				}
+				err := SaveEmoji(ep.name, ep.url)
+				if err != nil {
+					log.Printf("API error: %s\n", err)
+				}
+			}
+		}()
+	}
 
 	for k, v := range er.Emoji {
 		if strings.HasPrefix(v, "alias:") {
 			continue
 		}
-
-		wg.Add(1)
-
-		go func(name, url string) {
-			err := SaveEmoji(name, url)
-			if err != nil {
-				wg.Error(err)
-			} else {
-				wg.Done()
-			}
-		}(k, v)
+		emoChan <- emoPair{k, v}
 	}
 
-	if err = wg.Wait(); err != nil {
-		return err
-	}
+	close(emoChan)
+	wg.Wait()
 
 	for k, v := range er.Emoji {
 		if !strings.HasPrefix(v, "alias:") {
@@ -122,7 +149,7 @@ func BackupEmoji(key string) error {
 
 		alias := strings.Replace(v, "alias:", "", -1)
 		image := Filename(alias, er.Emoji[alias])
-		link := filepath.Join("aliases", k)
+		link := filepath.Join("emoji", k)
 
 		if _, err := os.Stat(link); err == nil {
 			log.Println("exists", link)
@@ -130,7 +157,7 @@ func BackupEmoji(key string) error {
 		}
 
 		log.Println("linked", link)
-		_ = os.Link(image, link)
+		_ = cp(image, link)
 	}
 
 	return nil
